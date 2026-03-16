@@ -10,11 +10,14 @@ interface ProfileEditorProps {
 
 export default function ProfileEditor({ templateUrl, templateName, onClose }: ProfileEditorProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [userImage, setUserImage] = useState<HTMLImageElement | null>(null);
   const [templateImage, setTemplateImage] = useState<HTMLImageElement | null>(null);
+  const [templateBlobUrl, setTemplateBlobUrl] = useState<string | null>(null);
   const [canvasSize, setCanvasSize] = useState({ width: 1080, height: 1080 });
+  const [containerWidth, setContainerWidth] = useState(500);
 
   // Transform state
   const [zoom, setZoom] = useState(1);
@@ -26,15 +29,64 @@ export default function ProfileEditor({ templateUrl, templateName, onClose }: Pr
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
 
-  // Load template image
+  // Status
+  const [downloading, setDownloading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Measure container width for responsive canvas
   useEffect(() => {
-    const img = new Image();
-    img.crossOrigin = "anonymous";
-    img.onload = () => {
-      setTemplateImage(img);
-      setCanvasSize({ width: img.naturalWidth, height: img.naturalHeight });
+    function measure() {
+      if (containerRef.current) {
+        setContainerWidth(Math.min(500, containerRef.current.clientWidth - 16));
+      }
+    }
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, []);
+
+  // Load template image as blob to avoid CORS/tainted canvas issues
+  useEffect(() => {
+    let cancelled = false;
+    setError(null);
+
+    async function loadTemplate() {
+      try {
+        // Fetch as blob to guarantee clean canvas (no CORS taint)
+        const res = await fetch(templateUrl);
+        if (!res.ok) throw new Error("Failed to load template");
+        const blob = await res.blob();
+        const blobUrl = URL.createObjectURL(blob);
+
+        if (cancelled) {
+          URL.revokeObjectURL(blobUrl);
+          return;
+        }
+
+        const img = new Image();
+        img.onload = () => {
+          if (cancelled) return;
+          setTemplateImage(img);
+          setTemplateBlobUrl(blobUrl);
+          setCanvasSize({ width: img.naturalWidth, height: img.naturalHeight });
+        };
+        img.onerror = () => {
+          if (cancelled) return;
+          setError("Failed to load template image");
+          URL.revokeObjectURL(blobUrl);
+        };
+        img.src = blobUrl;
+      } catch {
+        if (!cancelled) setError("Failed to load template image");
+      }
+    }
+
+    loadTemplate();
+    return () => {
+      cancelled = true;
+      if (templateBlobUrl) URL.revokeObjectURL(templateBlobUrl);
     };
-    img.src = templateUrl;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [templateUrl]);
 
   // Auto-fit user image when loaded
@@ -92,12 +144,14 @@ export default function ProfileEditor({ templateUrl, templateName, onClose }: Pr
   function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
+    setError(null);
 
     const img = new Image();
     img.onload = () => {
       setUserImage(img);
       fitUserImage(img);
     };
+    img.onerror = () => setError("Failed to load image. Try a different file.");
     img.src = URL.createObjectURL(file);
   }
 
@@ -108,8 +162,21 @@ export default function ProfileEditor({ templateUrl, templateName, onClose }: Pr
     const rect = canvas.getBoundingClientRect();
     const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
-    const clientX = "touches" in e ? e.touches[0].clientX : e.clientX;
-    const clientY = "touches" in e ? e.touches[0].clientY : e.clientY;
+
+    let clientX: number, clientY: number;
+    if ("touches" in e && e.touches.length > 0) {
+      clientX = e.touches[0].clientX;
+      clientY = e.touches[0].clientY;
+    } else if ("changedTouches" in e && e.changedTouches.length > 0) {
+      clientX = e.changedTouches[0].clientX;
+      clientY = e.changedTouches[0].clientY;
+    } else if ("clientX" in e) {
+      clientX = e.clientX;
+      clientY = e.clientY;
+    } else {
+      return { x: 0, y: 0 };
+    }
+
     return {
       x: (clientX - rect.left) * scaleX,
       y: (clientY - rect.top) * scaleY,
@@ -118,6 +185,7 @@ export default function ProfileEditor({ templateUrl, templateName, onClose }: Pr
 
   function handlePointerDown(e: React.MouseEvent | React.TouchEvent) {
     if (!userImage) return;
+    e.preventDefault();
     setIsDragging(true);
     const coords = getCanvasCoords(e);
     setDragStart({ x: coords.x - panX, y: coords.y - panY });
@@ -125,6 +193,7 @@ export default function ProfileEditor({ templateUrl, templateName, onClose }: Pr
 
   function handlePointerMove(e: React.MouseEvent | React.TouchEvent) {
     if (!isDragging) return;
+    e.preventDefault();
     const coords = getCanvasCoords(e);
     setPanX(coords.x - dragStart.x);
     setPanY(coords.y - dragStart.y);
@@ -141,38 +210,79 @@ export default function ProfileEditor({ templateUrl, templateName, onClose }: Pr
   }
 
   function handleDownload() {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
+    setDownloading(true);
+    setError(null);
 
-    // Render at full resolution
-    const offscreen = document.createElement("canvas");
-    offscreen.width = canvasSize.width;
-    offscreen.height = canvasSize.height;
-    const ctx = offscreen.getContext("2d");
-    if (!ctx) return;
+    try {
+      // Render at full resolution on offscreen canvas
+      const offscreen = document.createElement("canvas");
+      offscreen.width = canvasSize.width;
+      offscreen.height = canvasSize.height;
+      const ctx = offscreen.getContext("2d");
+      if (!ctx) {
+        setError("Canvas not supported in this browser");
+        setDownloading(false);
+        return;
+      }
 
-    if (userImage) {
-      ctx.save();
-      ctx.translate(panX, panY);
-      ctx.rotate((rotation * Math.PI) / 180);
-      ctx.scale(zoom, zoom);
-      ctx.drawImage(userImage, -userImage.naturalWidth / 2, -userImage.naturalHeight / 2);
-      ctx.restore();
+      if (userImage) {
+        ctx.save();
+        ctx.translate(panX, panY);
+        ctx.rotate((rotation * Math.PI) / 180);
+        ctx.scale(zoom, zoom);
+        ctx.drawImage(userImage, -userImage.naturalWidth / 2, -userImage.naturalHeight / 2);
+        ctx.restore();
+      }
+
+      if (templateImage) {
+        ctx.drawImage(templateImage, 0, 0, canvasSize.width, canvasSize.height);
+      }
+
+      // Try toBlob first, fall back to toDataURL
+      try {
+        offscreen.toBlob(
+          (blob) => {
+            if (blob) {
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = `profile-${templateName.replace(/\s+/g, "-").toLowerCase()}.png`;
+              document.body.appendChild(a);
+              a.click();
+              document.body.removeChild(a);
+              URL.revokeObjectURL(url);
+            } else {
+              // Fallback to toDataURL
+              downloadViaDataUrl(offscreen);
+            }
+            setDownloading(false);
+          },
+          "image/png"
+        );
+      } catch {
+        // SecurityError from tainted canvas — use toDataURL fallback
+        downloadViaDataUrl(offscreen);
+        setDownloading(false);
+      }
+    } catch (err) {
+      console.error("Download error:", err);
+      setError("Download failed. Try a different browser.");
+      setDownloading(false);
     }
+  }
 
-    if (templateImage) {
-      ctx.drawImage(templateImage, 0, 0, canvasSize.width, canvasSize.height);
-    }
-
-    offscreen.toBlob((blob) => {
-      if (!blob) return;
-      const url = URL.createObjectURL(blob);
+  function downloadViaDataUrl(canvas: HTMLCanvasElement) {
+    try {
+      const dataUrl = canvas.toDataURL("image/png");
       const a = document.createElement("a");
-      a.href = url;
+      a.href = dataUrl;
       a.download = `profile-${templateName.replace(/\s+/g, "-").toLowerCase()}.png`;
+      document.body.appendChild(a);
       a.click();
-      URL.revokeObjectURL(url);
-    }, "image/png");
+      document.body.removeChild(a);
+    } catch {
+      setError("Download failed — canvas security error. Try a different browser.");
+    }
   }
 
   function handleReset() {
@@ -181,19 +291,19 @@ export default function ProfileEditor({ templateUrl, templateName, onClose }: Pr
     }
   }
 
-  // Display scale for the preview canvas
-  const displaySize = Math.min(500, canvasSize.width);
-  const displayScale = displaySize / canvasSize.width;
+  // Responsive display size
+  const displaySize = containerWidth;
+  const displayHeight = displaySize * (canvasSize.height / canvasSize.width);
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-2 sm:p-4">
       <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[95vh] overflow-y-auto">
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-gray-200">
-          <h2 className="text-lg font-semibold text-gray-900">{templateName}</h2>
+          <h2 className="text-lg font-semibold text-gray-900 truncate pr-2">{templateName}</h2>
           <button
             onClick={onClose}
-            className="p-2 hover:bg-gray-100 rounded-lg transition-colors text-gray-500"
+            className="p-2 hover:bg-gray-100 rounded-lg transition-colors text-gray-500 flex-shrink-0"
           >
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -201,13 +311,19 @@ export default function ProfileEditor({ templateUrl, templateName, onClose }: Pr
           </button>
         </div>
 
-        <div className="p-4 md:p-6">
+        <div className="p-3 sm:p-4 md:p-6">
+          {error && (
+            <div className="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
+              {error}
+            </div>
+          )}
+
           <div className="flex flex-col lg:flex-row gap-6">
             {/* Canvas Preview */}
-            <div className="flex-1 flex flex-col items-center">
+            <div className="flex-1 flex flex-col items-center" ref={containerRef}>
               <div
-                className="relative bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAiIGhlaWdodD0iMjAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHJlY3Qgd2lkdGg9IjEwIiBoZWlnaHQ9IjEwIiBmaWxsPSIjZTVlN2ViIi8+PHJlY3QgeD0iMTAiIHk9IjEwIiB3aWR0aD0iMTAiIGhlaWdodD0iMTAiIGZpbGw9IiNlNWU3ZWIiLz48cmVjdCB4PSIxMCIgd2lkdGg9IjEwIiBoZWlnaHQ9IjEwIiBmaWxsPSIjZjNmNGY2Ii8+PHJlY3QgeT0iMTAiIHdpZHRoPSIxMCIgaGVpZ2h0PSIxMCIgZmlsbD0iI2YzZjRmNiIvPjwvc3ZnPg==')] bg-repeat rounded-xl overflow-hidden shadow-inner"
-                style={{ width: displaySize, height: displaySize * (canvasSize.height / canvasSize.width) }}
+                className="relative bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAiIGhlaWdodD0iMjAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHJlY3Qgd2lkdGg9IjEwIiBoZWlnaHQ9IjEwIiBmaWxsPSIjZTVlN2ViIi8+PHJlY3QgeD0iMTAiIHk9IjEwIiB3aWR0aD0iMTAiIGhlaWdodD0iMTAiIGZpbGw9IiNlNWU3ZWIiLz48cmVjdCB4PSIxMCIgd2lkdGg9IjEwIiBoZWlnaHQ9IjEwIiBmaWxsPSIjZjNmNGY2Ii8+PHJlY3QgeT0iMTAiIHdpZHRoPSIxMCIgaGVpZ2h0PSIxMCIgZmlsbD0iI2YzZjRmNiIvPjwvc3ZnPg==')] bg-repeat rounded-xl overflow-hidden shadow-inner w-full"
+                style={{ maxWidth: displaySize, height: displayHeight }}
               >
                 <canvas
                   ref={canvasRef}
@@ -215,6 +331,7 @@ export default function ProfileEditor({ templateUrl, templateName, onClose }: Pr
                     width: "100%",
                     height: "100%",
                     cursor: userImage ? (isDragging ? "grabbing" : "grab") : "default",
+                    touchAction: "none",
                   }}
                   onMouseDown={handlePointerDown}
                   onMouseMove={handlePointerMove}
@@ -337,12 +454,13 @@ export default function ProfileEditor({ templateUrl, templateName, onClose }: Pr
                     </button>
                     <button
                       onClick={handleDownload}
-                      className="flex-1 px-4 py-2 bg-green-600 text-white rounded-xl font-medium hover:bg-green-700 transition-colors text-sm flex items-center justify-center gap-1"
+                      disabled={downloading}
+                      className="flex-1 px-4 py-2 bg-green-600 text-white rounded-xl font-medium hover:bg-green-700 disabled:opacity-50 transition-colors text-sm flex items-center justify-center gap-1"
                     >
                       <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                       </svg>
-                      Download
+                      {downloading ? "Saving..." : "Download"}
                     </button>
                   </div>
                 </>
