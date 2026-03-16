@@ -33,6 +33,15 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 
+# database
+db/*.db
+db/*.db-wal
+db/*.db-shm
+
+# uploaded templates (user data)
+public/uploads/templates/*
+!public/uploads/templates/.gitkeep
+
 # vercel
 .vercel
 

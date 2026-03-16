@@ -1,36 +1,41 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Profile Picture Generator
 
-## Getting Started
+A web tool to create campaign profile pictures for social media. Admins upload PNG templates with transparent areas, and users overlay their photos with zoom/pan/rotate controls.
 
-First, run the development server:
+## Setup
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+The app runs at `http://localhost:3000`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Usage
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### Admin Panel (`/admin`)
+1. Login with the admin password (default: `admin123`)
+2. Upload campaign template PNGs (must have transparent center area)
+3. Manage templates — activate, deactivate, or delete
 
-## Learn More
+### User Flow (`/`)
+1. Browse available templates
+2. Click a template to open the editor
+3. Upload your profile photo
+4. Adjust with zoom, pan, and rotate controls (or drag/scroll on canvas)
+5. Download the composited image
 
-To learn more about Next.js, take a look at the following resources:
+## Configuration
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Edit `.env.local` to change the admin password:
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```
+ADMIN_PASSWORD=your_password_here
+```
 
-## Deploy on Vercel
+## Tech Stack
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- Next.js (App Router)
+- SQLite (better-sqlite3)
+- Tailwind CSS
+- HTML5 Canvas for client-side image compositing
