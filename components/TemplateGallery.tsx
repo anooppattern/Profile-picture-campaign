@@ -78,7 +78,7 @@ export default function TemplateGallery() {
           >
             <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAiIGhlaWdodD0iMjAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHJlY3Qgd2lkdGg9IjEwIiBoZWlnaHQ9IjEwIiBmaWxsPSIjZjBmMGYwIi8+PHJlY3QgeD0iMTAiIHk9IjEwIiB3aWR0aD0iMTAiIGhlaWdodD0iMTAiIGZpbGw9IiNmMGYwZjAiLz48cmVjdCB4PSIxMCIgd2lkdGg9IjEwIiBoZWlnaHQ9IjEwIiBmaWxsPSIjZmZmIi8+PHJlY3QgeT0iMTAiIHdpZHRoPSIxMCIgaGVpZ2h0PSIxMCIgZmlsbD0iI2ZmZiIvPjwvc3ZnPg==')] bg-repeat" />
             <img
-              src={`/uploads/templates/${template.filename}`}
+              src={`/api/templates/${template.id}/image`}
               alt={template.name}
               className="relative w-full h-full object-contain"
             />
@@ -97,7 +97,7 @@ export default function TemplateGallery() {
       {/* Editor Modal */}
       {selectedTemplate && (
         <ProfileEditor
-          templateUrl={`/uploads/templates/${selectedTemplate.filename}`}
+          templateUrl={`/api/templates/${selectedTemplate.id}/image`}
           templateName={selectedTemplate.name}
           onClose={() => setSelectedTemplate(null)}
         />

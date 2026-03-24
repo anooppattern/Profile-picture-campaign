@@ -19,6 +19,13 @@ function getDb(): Database.Database {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `);
+    // Add data column for storing image blobs (idempotent)
+    try {
+      db.exec(`ALTER TABLE templates ADD COLUMN data BLOB`);
+      db.exec(`ALTER TABLE templates ADD COLUMN mime_type TEXT DEFAULT 'image/png'`);
+    } catch {
+      // Columns already exist
+    }
   }
   return db;
 }
@@ -35,15 +42,22 @@ export interface Template {
 export function getTemplates(activeOnly = true): Template[] {
   const d = getDb();
   if (activeOnly) {
-    return d.prepare("SELECT * FROM templates WHERE is_active = 1 ORDER BY created_at DESC").all() as Template[];
+    return d.prepare("SELECT id, name, filename, category, is_active, created_at FROM templates WHERE is_active = 1 ORDER BY created_at DESC").all() as Template[];
   }
-  return d.prepare("SELECT * FROM templates ORDER BY created_at DESC").all() as Template[];
+  return d.prepare("SELECT id, name, filename, category, is_active, created_at FROM templates ORDER BY created_at DESC").all() as Template[];
 }
 
-export function addTemplate(name: string, filename: string, category: string): Template {
+export function addTemplate(name: string, filename: string, category: string, data?: Buffer, mimeType?: string): Template {
   const d = getDb();
-  const result = d.prepare("INSERT INTO templates (name, filename, category) VALUES (?, ?, ?)").run(name, filename, category);
-  return d.prepare("SELECT * FROM templates WHERE id = ?").get(result.lastInsertRowid) as Template;
+  const result = d.prepare("INSERT INTO templates (name, filename, category, data, mime_type) VALUES (?, ?, ?, ?, ?)").run(name, filename, category, data || null, mimeType || "image/png");
+  return d.prepare("SELECT id, name, filename, category, is_active, created_at FROM templates WHERE id = ?").get(result.lastInsertRowid) as Template;
+}
+
+export function getTemplateImage(id: number): { data: Buffer; mime_type: string } | null {
+  const d = getDb();
+  const row = d.prepare("SELECT data, mime_type FROM templates WHERE id = ?").get(id) as { data: Buffer | null; mime_type: string } | undefined;
+  if (!row || !row.data) return null;
+  return { data: row.data, mime_type: row.mime_type };
 }
 
 export function deleteTemplate(id: number): boolean {

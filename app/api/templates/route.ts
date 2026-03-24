@@ -36,8 +36,15 @@ export async function POST(request: NextRequest) {
   const filePath = path.join(uploadDir, filename);
 
   const bytes = await file.arrayBuffer();
-  await writeFile(filePath, Buffer.from(bytes));
+  const buffer = Buffer.from(bytes);
 
-  const template = addTemplate(name, filename, category);
+  // Write to filesystem (for local dev) and store in DB (for persistence on deploy)
+  try {
+    await writeFile(filePath, buffer);
+  } catch {
+    // Directory may not exist on some platforms
+  }
+
+  const template = addTemplate(name, filename, category, buffer, file.type);
   return NextResponse.json(template, { status: 201 });
 }
